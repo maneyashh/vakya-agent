@@ -13,13 +13,16 @@ st.sidebar.header("Configuration")
 gemini_key = st.sidebar.text_input("Gemini API Key", type="password")
 sarvam_key = st.sidebar.text_input("Sarvam API Key", type="password")
 
+# Initialize session state for history
+if "history" not in st.session_state:
+    st.session_state.history = []
+
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. Input Context")
     img_file = st.file_uploader("📸 Upload Problem Screenshot", type=["png", "jpg", "jpeg"])
     
-    # NEW: Dropdowns for both Code and Spoken Language
     target_language = st.selectbox("💻 Target Programming Language", ["C++", "Python", "Java", "JavaScript", "C"])
     instruction_lang = st.selectbox("🗣️ Spoken Language (For Explanations)", ["Hinglish", "Marathi", "Hindi", "English"])
     
@@ -32,7 +35,8 @@ with col1:
     generate_btn = st.button("Generate Code & Instructions 🧠", use_container_width=True)
 
 with col2:
-    st.subheader("2. Agent Output")
+    st.subheader("2. Agent Output & History")
+    
     if generate_btn:
         if not gemini_key or not sarvam_key:
             st.error("⚠️ Please paste both API keys in the sidebar.")
@@ -52,17 +56,13 @@ with col2:
                     with open(temp_wav_path, 'rb') as f:
                         stt_response = sarvam_client.speech_to_text.translate(file=f)
                     user_intent = stt_response.transcript
-                    st.info(f"**Translated Command:** {user_intent}")
                 
                 os.remove(temp_wav_path)
 
-                # Gemini Code & Instruction Generation
                 genai.configure(api_key=gemini_key, transport="rest")
                 gemini_model = genai.GenerativeModel('gemini-3.8-flash')
                 
                 img = Image.open(img_file)
-                
-                # NEW: Prompt asks for exact formatting so we can parse Code and Instructions separately
                 prompt = f"""
                 The user asked: '{user_intent}'. 
                 Based on the screenshot, write a highly optimized {target_language} solution.
@@ -81,27 +81,47 @@ with col2:
                     response = gemini_model.generate_content([prompt, img])
                     raw_text = response.text
                     
-                    # Safely parse out the two sections
                     try:
                         clean_code = raw_text.split("[CODE]")[1].split("[/CODE]")[0].strip()
                         clean_instructions = raw_text.split("[INSTRUCTIONS]")[1].split("[/INSTRUCTIONS]")[0].strip()
                     except:
-                        clean_code = raw_text # Fallback just in case
-                        clean_instructions = "Instructions generated alongside code above."
+                        clean_code = raw_text
+                        clean_instructions = "Generated successfully."
 
-                    # Display Code
-                    highlight_lang = "cpp" if target_language == "C++" else target_language.lower()
-                    st.code(clean_code.replace('```cpp', '').replace('```', ''), language=highlight_lang)
-                    
-                    # Display Instructions
-                    st.success(f"**Step-by-Step Logic ({instruction_lang}):**\n\n{clean_instructions}")
+                    # Save to session history
+                    st.session_state.history.insert(0, {
+                        "intent": user_intent,
+                        "code": clean_code,
+                        "instructions": clean_instructions,
+                        "lang": target_language
+                    })
                 
                 with st.spinner("🔊 Generating Sarvam audio..."):
                     tts_response = sarvam_client.text_to_speech.convert(
-                        text=f"Bhai, {target_language} code aur instructions dono screen par aa gaye hain.",
+                        text=f"Bhai, {target_language} code ready hai.",
                         target_language_code="hi-IN"
                     )
                     st.audio(tts_response.audio, format="audio/wav")
                     
             except Exception as e:
                 st.error(f"Network/API Error: {e}")
+
+    # Render History Feed
+    if st.session_state.history:
+        for idx, item in enumerate(st.session_state.history):
+            with st.container():
+                st.info(f"🗣️ **Command:** {item['intent']}")
+                highlight_lang = "cpp" if item['lang'] == "C++" else item['lang'].lower()
+                st.code(item['code'].replace('```cpp', '').replace('```', ''), language=highlight_lang)
+                
+                # Download button for each generated code snippet
+                file_ext = "cpp" if item['lang'] == "C++" else ("py" if item['lang'] == "Python" else "txt")
+                st.download_button(
+                    label=f"📥 Download {item['lang']} Code",
+                    data=item['code'],
+                    file_name=f"solution.{file_ext}",
+                    key=f"download_{idx}"
+                )
+                
+                st.success(f"**Instructions:**\n\n{item['instructions']}")
+                st.divider()
