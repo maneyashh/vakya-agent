@@ -2,3 +2,4 @@ streamlit
 google-generativeai
 sarvamai
 pillow
+audio-recorder-streamlit
